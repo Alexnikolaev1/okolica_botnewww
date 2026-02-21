@@ -32,7 +32,7 @@ python bot.py
 git init
 git add .
 git commit -m "Initial commit"
-git remote add origin https://github.com/Alexnikolaev1/okolica_botnew.git
+git remote add origin https://github.com/Alexnikolaev1/okolica_botnewww.git
 git branch -M main
 git push -u origin main
 ```
@@ -48,7 +48,7 @@ git push -u origin main
 
 ### 3. Установить webhook
 
-После деплоя получите URL вида `https://okolica-botnew-xxx.vercel.app`.
+После деплоя получите URL вида `https://okolicabotnewww.vercel.app`.
 
 Выполните (подставьте свой токен и URL):
 
