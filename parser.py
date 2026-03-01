@@ -22,6 +22,7 @@ from config import (
     OKOLICA_CATEGORY_PAGES,
     OKOLICA_GAZETA_PAGES,
     OKOLICA_GAZETA_PAGES_ARCHIVE,
+    OKOLICA_ARCHIVE_CATEGORY_PAGES,
 )
 
 # Разделы okolica.net для расширенного поиска (пустая строка = главная лента)
@@ -520,16 +521,23 @@ def search_okolica_news(query: str, limit: int = None) -> list[dict]:
 
 def search_okolica_archive(query: str, limit: int = None) -> list[dict]:
     """
-    Поиск по архиву газеты: поэзия, рассказы, очерки и др.
-    Использует расширенный охват страниц архива.
+    Поиск по архиву: разделы ГОРОД и ФОТО (без ГАЗЕТА).
+    Поэзия, рассказы, очерки, городские материалы, фоторепортажи.
     """
     limit = limit or ARTICLES_LIMIT_ARCHIVE
     try:
-        gazeta_articles = _fetch_okolica_gazeta(OKOLICA_GAZETA_PAGES_ARCHIVE)
-        if not gazeta_articles:
+        seen_urls: set = set()
+        all_articles = []
+        for cat in ["gorod", "foto"]:
+            all_articles.extend(
+                _fetch_okolica_html_from_path(
+                    cat, OKOLICA_ARCHIVE_CATEGORY_PAGES, seen_urls
+                )
+            )
+        if not all_articles:
             return []
         query_words = _extract_and_expand_query(query)
-        return _run_search(gazeta_articles, query_words, limit)
+        return _run_search(all_articles, query_words, limit)
     except Exception as e:
         logger.error("Ошибка поиска по архиву okolica.net: %s", e)
         return []

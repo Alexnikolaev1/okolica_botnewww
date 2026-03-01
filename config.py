@@ -41,6 +41,7 @@ OKOLICA_HTML_PAGES = 12  # кол-во страниц /news/?page=N
 OKOLICA_CATEGORY_PAGES = 5  # страниц на каждый раздел (rayon, busines и т.д.)
 OKOLICA_GAZETA_PAGES = 8  # страниц архива для общего поиска
 OKOLICA_GAZETA_PAGES_ARCHIVE = 20  # страниц архива для поиска поэзии/статей (больше охват)
+OKOLICA_ARCHIVE_CATEGORY_PAGES = 10  # страниц для разделов gorod, foto в поиске по архиву
 ARTICLES_LIMIT_ARCHIVE = 15  # лимит результатов для поиска по архиву
 JOB_CHECK_INTERVAL_MINUTES = 30
 
