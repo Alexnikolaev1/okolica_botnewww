@@ -37,7 +37,11 @@ WEATHER_TIMEZONE = os.getenv("WEATHER_TIMEZONE", "Asia/Novosibirsk")
 MAX_MESSAGE_LENGTH = 4096  # Лимит Telegram
 ARTICLES_LIMIT_LATEST = 5
 ARTICLES_LIMIT_SEARCH = 10
-OKOLICA_HTML_PAGES = 12  # кол-во страниц /news/?page=N для расширенного поиска по старому сайту
+OKOLICA_HTML_PAGES = 12  # кол-во страниц /news/?page=N
+OKOLICA_CATEGORY_PAGES = 5  # страниц на каждый раздел (rayon, busines и т.д.)
+OKOLICA_GAZETA_PAGES = 8  # страниц архива для общего поиска
+OKOLICA_GAZETA_PAGES_ARCHIVE = 20  # страниц архива для поиска поэзии/статей (больше охват)
+ARTICLES_LIMIT_ARCHIVE = 15  # лимит результатов для поиска по архиву
 JOB_CHECK_INTERVAL_MINUTES = 30
 
 # HTTP

@@ -47,6 +47,7 @@ from config import (
     ADMIN_ID,
     ARTICLES_LIMIT_LATEST,
     ARTICLES_LIMIT_SEARCH,
+    ARTICLES_LIMIT_ARCHIVE,
     JOB_CHECK_INTERVAL_MINUTES,
     MAX_MESSAGE_LENGTH,
 )
@@ -63,7 +64,8 @@ from database import (
 from parser import (
     get_latest_articles as fetch_latest,
     search_okolica_old,
-    search_okolica_only,
+    search_okolica_news,
+    search_okolica_archive,
     get_weather,
 )
 from utils import format_articles_list, truncate_message, escape_html
@@ -113,6 +115,8 @@ class OkolicaBot:
         self.application.add_handler(CommandHandler("voice", self.cmd_voice))
         self.application.add_handler(CommandHandler("contacts", self.cmd_contacts))
         self.application.add_handler(CommandHandler("search_old", self.cmd_search_old))
+        self.application.add_handler(CommandHandler("search_old_news", self.cmd_search_old_news))
+        self.application.add_handler(CommandHandler("search_old_archive", self.cmd_search_old_archive))
         self.application.add_handler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message)
         )
@@ -140,7 +144,8 @@ class OkolicaBot:
 
 📰 /latest — последние новости
 🔍 /search <запрос> — поиск (новый + старый сайт)
-🔎 /search_old <запрос> — поиск на okolica.net
+📰 /search_old_news <запрос> — поиск новостей на okolica.net
+📖 /search_old_archive <запрос> — поиск поэзии и статей в архиве
 📚 Архив — выпуски газеты (okolica.net/gazeta/)
 🌤️ /weather — погода в Татарске
 📝 /news <текст> — предложить новость
@@ -154,7 +159,8 @@ class OkolicaBot:
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("📰 Последние новости", callback_data="latest")],
             [InlineKeyboardButton("🔍 Поиск", callback_data="search_prompt")],
-            [InlineKeyboardButton("🔎 Поиск по старому сайту", callback_data="search_old_prompt")],
+            [InlineKeyboardButton("📰 Поиск новостей (okolica.net)", callback_data="search_old_news_prompt")],
+            [InlineKeyboardButton("📖 Поиск поэзии и статей (архив)", callback_data="search_old_archive_prompt")],
             [InlineKeyboardButton("📚 Архив", url=f"{OLD_SITE_URL}/gazeta/")],
             [InlineKeyboardButton("📝 Предложить новость", callback_data="news_prompt")],
             [InlineKeyboardButton("📣 В Голос народа", callback_data="voice_prompt")],
@@ -179,7 +185,8 @@ class OkolicaBot:
 
 📰 /latest — последние статьи
 🔍 /search &lt;текст&gt; — поиск (okolica.net и sibokolica.ru)
-🔎 /search_old &lt;текст&gt; — поиск только на okolica.net
+📰 /search_old_news &lt;текст&gt; — поиск новостей на okolica.net
+📖 /search_old_archive &lt;текст&gt; — поиск поэзии и статей в архиве
 📚 Архив — выпуски газеты (okolica.net/gazeta/)
 🌤️ /weather — погода
 📝 /news &lt;текст&gt; — предложить новость
@@ -260,11 +267,13 @@ class OkolicaBot:
             )
 
     async def cmd_search_old(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Поиск только на старом сайте okolica.net."""
+        """Поиск на старом сайте okolica.net (новости + архив)."""
         if not context.args:
             await update.message.reply_text(
-                "🔎 <b>Поиск по старому сайту okolica.net</b>\n\n"
-                "Укажите запрос: /search_old ваш запрос",
+                "🔎 <b>Поиск на okolica.net</b>\n\n"
+                "Используйте:\n"
+                "• /search_old_news запрос — новости\n"
+                "• /search_old_archive запрос — поэзия и статьи в архиве",
                 parse_mode="HTML",
             )
             return
@@ -273,22 +282,70 @@ class OkolicaBot:
         chat_id = update.effective_chat.id
         await context.bot.send_message(chat_id, "🔎 Ищу на okolica.net…")
 
-        articles = await run_blocking(search_okolica_only, query, ARTICLES_LIMIT_SEARCH)
+        articles = await run_blocking(search_okolica_news, query, ARTICLES_LIMIT_SEARCH)
+        if not articles:
+            articles = await run_blocking(search_okolica_archive, query, ARTICLES_LIMIT_ARCHIVE)
 
         if articles:
-            header = (
-                f"🔎 <b>Результаты на okolica.net по запросу «{escape_html(query)}»:</b>\n\n"
-            )
+            header = f"🔎 <b>Результаты на okolica.net по запросу «{escape_html(query)}»:</b>\n\n"
             text = format_articles_list(articles, header)
-            await context.bot.send_message(
-                chat_id,
-                truncate_message(text),
-                parse_mode="HTML",
-            )
+            await context.bot.send_message(chat_id, truncate_message(text), parse_mode="HTML")
         else:
             await context.bot.send_message(
                 chat_id,
-                f"😔 По запросу «{escape_html(query)}» на okolica.net ничего не найдено.",
+                f"😔 По запросу «{escape_html(query)}» ничего не найдено.",
+            )
+
+    async def cmd_search_old_news(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Поиск новостей на okolica.net."""
+        if not context.args:
+            await update.message.reply_text(
+                "📰 <b>Поиск новостей на okolica.net</b>\n\n"
+                "Укажите запрос: /search_old_news ваш запрос",
+                parse_mode="HTML",
+            )
+            return
+
+        query = " ".join(context.args)
+        chat_id = update.effective_chat.id
+        await context.bot.send_message(chat_id, "📰 Ищу новости на okolica.net…")
+
+        articles = await run_blocking(search_okolica_news, query, ARTICLES_LIMIT_SEARCH)
+
+        if articles:
+            header = f"📰 <b>Новости okolica.net по запросу «{escape_html(query)}»:</b>\n\n"
+            text = format_articles_list(articles, header)
+            await context.bot.send_message(chat_id, truncate_message(text), parse_mode="HTML")
+        else:
+            await context.bot.send_message(
+                chat_id,
+                f"😔 По запросу «{escape_html(query)}» новостей не найдено.",
+            )
+
+    async def cmd_search_old_archive(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Поиск поэзии и статей в архиве газеты."""
+        if not context.args:
+            await update.message.reply_text(
+                "📖 <b>Поиск по архиву газеты</b> (поэзия, рассказы, очерки)\n\n"
+                "Укажите запрос: /search_old_archive ваш запрос",
+                parse_mode="HTML",
+            )
+            return
+
+        query = " ".join(context.args)
+        chat_id = update.effective_chat.id
+        await context.bot.send_message(chat_id, "📖 Ищу в архиве газеты…")
+
+        articles = await run_blocking(search_okolica_archive, query, ARTICLES_LIMIT_ARCHIVE)
+
+        if articles:
+            header = f"📖 <b>Архив газеты по запросу «{escape_html(query)}»:</b>\n\n"
+            text = format_articles_list(articles, header)
+            await context.bot.send_message(chat_id, truncate_message(text), parse_mode="HTML")
+        else:
+            await context.bot.send_message(
+                chat_id,
+                f"😔 По запросу «{escape_html(query)}» в архиве ничего не найдено.",
             )
 
     async def cmd_subscribe(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -311,8 +368,11 @@ class OkolicaBot:
 
     async def _send_to_admin(
         self, context: ContextTypes.DEFAULT_TYPE, label: str, text: str, user
-    ) -> bool:
-        """Отправка сообщения администратору."""
+    ) -> tuple[bool, str]:
+        """
+        Отправка сообщения администратору.
+        Возвращает (успех, подсказка_при_ошибке).
+        """
         try:
             user_info = f"{user.first_name or ''} {user.last_name or ''}".strip() or "—"
             username = f"@{user.username}" if user.username else "—"
@@ -326,10 +386,11 @@ class OkolicaBot:
                 text=msg,
                 parse_mode="HTML",
             )
-            return True
+            return True, ""
         except Exception as e:
-            logger.error("Ошибка отправки администратору: %s", e)
-            return False
+            logger.error("Ошибка отправки администратору (ADMIN_ID=%s): %s", ADMIN_ID, e)
+            hint = " Администратор должен нажать /start в этом боте — иначе бот не может ему писать."
+            return False, hint
 
     async def cmd_news(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Предложить новость — пересылается администратору."""
@@ -343,7 +404,7 @@ class OkolicaBot:
             return
         text = " ".join(context.args)
         user = update.effective_user
-        ok = await self._send_to_admin(
+        ok, hint = await self._send_to_admin(
             context, "Предложена новость", text, user
         )
         if ok:
@@ -352,7 +413,7 @@ class OkolicaBot:
             )
         else:
             await update.message.reply_text(
-                "⚠️ Не удалось отправить. Попробуйте позже."
+                f"⚠️ Не удалось отправить.{hint}"
             )
 
     async def cmd_voice(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -368,7 +429,7 @@ class OkolicaBot:
             return
         text = " ".join(context.args)
         user = update.effective_user
-        ok = await self._send_to_admin(
+        ok, hint = await self._send_to_admin(
             context, "Обращение в рубрику «Голос народа»", text, user
         )
         if ok:
@@ -377,7 +438,7 @@ class OkolicaBot:
             )
         else:
             await update.message.reply_text(
-                "⚠️ Не удалось отправить. Попробуйте позже."
+                f"⚠️ Не удалось отправить.{hint}"
             )
 
     async def cmd_contacts(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -399,7 +460,8 @@ class OkolicaBot:
         """Обработка текстовых сообщений."""
         await update.message.reply_text(
             "Используйте /news для предложения новости, /voice для рубрики «Голос народа», "
-            "/search_old для поиска на okolica.net или /contacts для контактов редакции."
+            "/search_old_news или /search_old_archive для поиска на okolica.net, "
+            "/contacts для контактов редакции."
         )
 
     async def handle_callback(
@@ -438,11 +500,19 @@ class OkolicaBot:
                 "🔍 Введите поисковый запрос:\n/search ваш запрос",
             )
 
-        elif query.data == "search_old_prompt":
+        elif query.data == "search_old_news_prompt":
             await context.bot.send_message(
                 chat_id,
-                "🔎 <b>Поиск по старому сайту okolica.net</b>\n\n"
-                "Укажите запрос: /search_old ваш запрос",
+                "📰 <b>Поиск новостей на okolica.net</b>\n\n"
+                "Укажите запрос: /search_old_news ваш запрос",
+                parse_mode="HTML",
+            )
+
+        elif query.data == "search_old_archive_prompt":
+            await context.bot.send_message(
+                chat_id,
+                "📖 <b>Поиск по архиву</b> (поэзия, рассказы, очерки)\n\n"
+                "Укажите запрос: /search_old_archive ваш запрос",
                 parse_mode="HTML",
             )
 

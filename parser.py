@@ -17,10 +17,112 @@ from config import (
     USER_AGENT,
     REQUEST_TIMEOUT,
     ARTICLES_LIMIT_SEARCH,
+    ARTICLES_LIMIT_ARCHIVE,
     OKOLICA_HTML_PAGES,
+    OKOLICA_CATEGORY_PAGES,
+    OKOLICA_GAZETA_PAGES,
+    OKOLICA_GAZETA_PAGES_ARCHIVE,
 )
 
+# Разделы okolica.net для расширенного поиска (пустая строка = главная лента)
+_OKOLICA_CATEGORIES = ["", "rayon", "busines", "gorod", "foto"]
+
+# Стоп-слова (не участвуют в поиске)
+_STOP_WORDS = frozenset({
+    "и", "в", "на", "с", "по", "из", "к", "от", "для", "о", "об", "а", "но", "у",
+    "же", "или", "как", "что", "это", "всё", "все", "его", "её", "их", "он", "она",
+    "они", "мы", "вы", "я", "не", "ни", "без", "до", "за", "при", "про", "так",
+    "уже", "еще", "тоже", "только", "можно", "быть", "есть", "был", "была",
+})
+
+# Синонимы: ключ → дополнительные слова для расширения запроса
+_SYNONYMS = {
+    "поэзия": ["стихи", "стих", "стихотворение"],
+    "стихи": ["поэзия", "стих"],
+    "стих": ["поэзия", "стихи"],
+    "стихотворение": ["поэзия", "стихи"],
+    "рассказ": ["история", "очерк"],
+    "очерк": ["рассказ", "статья"],
+    "статья": ["очерк", "материал"],
+    "победа": ["победитель", "победный"],
+    "школа": ["школьник", "школьный"],
+    "дети": ["ребенок", "ребята"],
+    "праздник": ["праздничный", "празднование"],
+    "война": ["военный", "фронт"],
+    "татарск": ["татарский"],
+}
+
 logger = logging.getLogger(__name__)
+
+_morph_analyzer = None
+
+
+def _get_morph():
+    """Ленивая инициализация морфологического анализатора."""
+    global _morph_analyzer
+    if _morph_analyzer is None:
+        try:
+            import pymorphy2
+            _morph_analyzer = pymorphy2.MorphAnalyzer()
+        except ImportError:
+            _morph_analyzer = False
+    return _morph_analyzer
+
+
+def _normalize_word(word: str) -> str:
+    """Приведение слова к нормальной форме (лемма) для поиска."""
+    morph = _get_morph()
+    if not morph:
+        return word.lower()
+    try:
+        parsed = morph.parse(word.lower())
+        if parsed:
+            return parsed[0].normal_form
+    except Exception:
+        pass
+    return word.lower()
+
+
+def _expand_with_synonyms(words: list[str]) -> list[str]:
+    """Добавляет синонимы к списку слов."""
+    seen = set(words)
+    result = list(words)
+    for w in words:
+        if w in _SYNONYMS:
+            for s in _SYNONYMS[w]:
+                if s not in seen and len(s) >= 2:
+                    seen.add(s)
+                    result.append(s)
+        else:
+            for key, syns in _SYNONYMS.items():
+                if w in syns and key not in seen:
+                    seen.add(key)
+                    result.append(key)
+                    break
+    return result
+
+
+def _extract_and_expand_query(query: str) -> list[str]:
+    """
+    Извлечение слов из запроса: токенизация, стоп-слова, стемминг, синонимы.
+    Возвращает список нормализованных слов (без дубликатов).
+    """
+    words = [w for w in re.findall(r"[а-яёa-z0-9]+", query.lower()) if len(w) >= 2]
+    words = [w for w in words if w not in _STOP_WORDS]
+    if not words:
+        return []
+
+    # Нормализация (лемматизация)
+    normalized = []
+    seen = set()
+    for w in words:
+        norm = _normalize_word(w)
+        if norm not in seen:
+            seen.add(norm)
+            normalized.append(norm)
+
+    # Расширение синонимами
+    return _expand_with_synonyms(normalized)
 
 
 def _make_request(url: str, params: dict = None, retries: int = 2) -> requests.Response:
@@ -169,18 +271,17 @@ def _fetch_okolica_rss() -> list[dict]:
         return []
 
 
-def _fetch_okolica_html(max_pages: int = None) -> list[dict]:
-    """
-    Загрузка статей со страниц HTML okolica.net (расширение пула для поиска).
-    Сайт в cp1251, парсим ссылки из ленты новостей.
-    """
-    max_pages = max_pages or OKOLICA_HTML_PAGES
-    all_articles = []
-    seen_urls = set()
+def _fetch_okolica_html_from_path(
+    base_path: str, max_pages: int, seen_urls: set
+) -> list[dict]:
+    """Загрузка статей с одной секции (news, news/rayon, news/busines)."""
+    articles = []
+    path = f"{OLD_SITE_URL}/news/{base_path}" if base_path else f"{OLD_SITE_URL}/news"
+    path = path.rstrip("/")
 
     for page in range(1, max_pages + 1):
         try:
-            url = f"{OLD_SITE_URL}/news/" + (f"?page={page}" if page > 1 else "")
+            url = f"{path}/?page={page}" if page > 1 else f"{path}/"
             response = _make_request(url)
             response.raise_for_status()
             try:
@@ -208,7 +309,7 @@ def _fetch_okolica_html(max_pages: int = None) -> list[dict]:
 
                 seen_urls.add(href)
                 full_url_https = full_url.replace("http://", "https://", 1)
-                all_articles.append({
+                articles.append({
                     "title": title,
                     "url": full_url_https,
                     "summary": "",
@@ -216,16 +317,174 @@ def _fetch_okolica_html(max_pages: int = None) -> list[dict]:
                 })
 
         except Exception as e:
-            logger.warning("Ошибка HTML okolica.net page %s: %s", page, e)
+            logger.warning("Ошибка HTML okolica.net %s page %s: %s", base_path or "news", page, e)
+            break
+
+    return articles
+
+
+def _fetch_okolica_html(max_pages: int = None) -> list[dict]:
+    """
+    Загрузка статей со всех разделов okolica.net: главная лента + rayon, busines.
+    Сайт в cp1251.
+    """
+    seen_urls: set = set()
+    all_articles = []
+
+    # Главная лента /news/
+    all_articles.extend(
+        _fetch_okolica_html_from_path("", OKOLICA_HTML_PAGES, seen_urls)
+    )
+
+    # Разделы rayon, busines
+    for cat in _OKOLICA_CATEGORIES:
+        if not cat:
+            continue
+        all_articles.extend(
+            _fetch_okolica_html_from_path(cat, OKOLICA_CATEGORY_PAGES, seen_urls)
+        )
+
+    return all_articles
+
+
+def _fetch_okolica_gazeta(max_pages: int = None) -> list[dict]:
+    """
+    Загрузка заголовков статей из архива газеты /gazeta/.
+    Формат: «• Заголовок 1 • Заголовок 2» — разбиваем по • и добавляем в поиск.
+    URL ведёт на архив (пользователь найдёт выпуск).
+    """
+    max_pages = max_pages or OKOLICA_GAZETA_PAGES
+    all_articles = []
+    seen_titles: set = set()
+
+    for page in range(1, max_pages + 1):
+        try:
+            url = f"{OLD_SITE_URL}/gazeta/" + (f"?page={page}" if page > 1 else "")
+            response = _make_request(url)
+            response.raise_for_status()
+            try:
+                text = response.content.decode("cp1251")
+            except UnicodeDecodeError:
+                text = response.content.decode("utf-8", errors="replace")
+            soup = BeautifulSoup(text, "html.parser")
+
+            # Ищем блоки с выпусками: заголовки статей в формате «• Текст • Текст»
+            for elem in soup.find_all(["p", "div", "li", "td"]):
+                txt = elem.get_text(separator=" ", strip=True)
+                if "•" not in txt or len(txt) < 10:
+                    continue
+                # Разбиваем по • и берём каждую часть как заголовок
+                parts = [p.strip() for p in txt.split("•") if len(p.strip()) >= 5]
+                for title in parts:
+                    title = re.sub(r"\s+", " ", title)
+                    if len(title) < 5 or title in seen_titles:
+                        continue
+                    seen_titles.add(title)
+                    all_articles.append({
+                        "title": title,
+                        "url": f"{OLD_SITE_URL}/gazeta/",
+                        "summary": "",
+                        "_fulltext": title,
+                    })
+
+        except Exception as e:
+            logger.warning("Ошибка gazeta okolica.net page %s: %s", page, e)
             break
 
     return all_articles
 
 
-def _merge_okolica_sources(rss_articles: list[dict], html_articles: list[dict]) -> list[dict]:
+_lemma_cache: dict[str, str] = {}
+_LEMMA_CACHE_MAX = 5000
+
+
+def _get_lemma(word: str) -> str:
+    """Лемма слова с кэшированием."""
+    w = word.lower()
+    if w not in _lemma_cache:
+        if len(_lemma_cache) >= _LEMMA_CACHE_MAX:
+            _lemma_cache.clear()
+        _lemma_cache[w] = _normalize_word(w)
+    return _lemma_cache[w]
+
+
+def _word_matches(query_word: str, searchable: str) -> bool:
     """
-    Объединяет RSS и HTML: RSS даёт fulltext/summary (~10 статей), HTML — широкий охват (сотни).
-    При дубликате по URL приоритет у RSS.
+    Проверка вхождения слова в текст. Учитывает:
+    - точное вхождение подстроки (день в деньги)
+    - совпадение по лемме (школа/школы/школьник через pymorphy2)
+    - совпадение по префиксу 3 символа (fallback)
+    """
+    searchable_lower = searchable.lower()
+    if query_word in searchable_lower:
+        return True
+
+    query_lemma = _get_lemma(query_word)
+    words_in_text = re.findall(r"[а-яёa-z]{2,}", searchable_lower)
+
+    for w in words_in_text:
+        word_lemma = _get_lemma(w)
+        if query_lemma == word_lemma:
+            return True
+        if query_word in word_lemma or word_lemma in query_word:
+            return True
+        # Префикс 3+ символов
+        if len(query_lemma) >= 3 and len(word_lemma) >= 3:
+            if query_lemma[:3] == word_lemma[:3]:
+                return True
+
+    return False
+
+
+def _count_matches(query_words: list[str], searchable: str) -> int:
+    """Количество совпавших слов запроса (для сортировки по релевантности)."""
+    return sum(1 for w in query_words if _word_matches(w, searchable))
+
+
+def _run_search(articles: list[dict], query_words: list[str], limit: int) -> list[dict]:
+    """
+    Поиск по списку статей с сортировкой по релевантности.
+    Сначала — все слова, затем — любое слово. Внутри — по количеству совпадений.
+    """
+    if not query_words:
+        return []
+
+    # Все слова
+    full_match = []
+    for a in articles:
+        searchable = f"{a['title']} {a.get('summary', '')} {a.get('_fulltext', '')}"
+        if all(_word_matches(w, searchable) for w in query_words):
+            cnt = _count_matches(query_words, searchable)
+            full_match.append((cnt, a))
+
+    if full_match:
+        full_match.sort(key=lambda x: (-x[0], x[1]["title"]))
+        return [
+            {"title": a["title"], "url": a["url"], "summary": a.get("summary", "")}
+            for _, a in full_match[:limit]
+        ]
+
+    # Любое слово
+    any_match = []
+    for a in articles:
+        searchable = f"{a['title']} {a.get('summary', '')} {a.get('_fulltext', '')}"
+        cnt = _count_matches(query_words, searchable)
+        if cnt > 0:
+            any_match.append((cnt, a))
+
+    any_match.sort(key=lambda x: (-x[0], x[1]["title"]))
+    return [
+        {"title": a["title"], "url": a["url"], "summary": a.get("summary", "")}
+        for _, a in any_match[:limit]
+    ]
+
+
+def _merge_okolica_sources(
+    rss_articles: list[dict], html_articles: list[dict], gazeta_articles: list[dict] = None
+) -> list[dict]:
+    """
+    Объединяет RSS, HTML и gazeta. При дубликате по URL приоритет у RSS.
+    Gazeta: много статей с одним URL, различаются по title.
     """
     by_url: dict[str, dict] = {}
     for a in rss_articles:
@@ -235,49 +494,62 @@ def _merge_okolica_sources(rss_articles: list[dict], html_articles: list[dict]) 
         url = a["url"].replace("http://", "https://", 1).rstrip("/")
         if url not in by_url:
             by_url[url] = a
-    return list(by_url.values())
+    result = list(by_url.values())
+    result.extend(gazeta_articles or [])
+    return result
+
+
+def search_okolica_news(query: str, limit: int = None) -> list[dict]:
+    """
+    Поиск новостей на okolica.net: RSS + разделы новостей (rayon, busines, gorod, foto).
+    Без архива газеты.
+    """
+    limit = limit or ARTICLES_LIMIT_SEARCH
+    try:
+        rss_articles = _fetch_okolica_rss()
+        html_articles = _fetch_okolica_html()
+        articles = _merge_okolica_sources(rss_articles, html_articles, gazeta_articles=None)
+        if not articles:
+            return []
+        query_words = _extract_and_expand_query(query)
+        return _run_search(articles, query_words, limit)
+    except Exception as e:
+        logger.error("Ошибка поиска новостей okolica.net: %s", e)
+        return []
+
+
+def search_okolica_archive(query: str, limit: int = None) -> list[dict]:
+    """
+    Поиск по архиву газеты: поэзия, рассказы, очерки и др.
+    Использует расширенный охват страниц архива.
+    """
+    limit = limit or ARTICLES_LIMIT_ARCHIVE
+    try:
+        gazeta_articles = _fetch_okolica_gazeta(OKOLICA_GAZETA_PAGES_ARCHIVE)
+        if not gazeta_articles:
+            return []
+        query_words = _extract_and_expand_query(query)
+        return _run_search(gazeta_articles, query_words, limit)
+    except Exception as e:
+        logger.error("Ошибка поиска по архиву okolica.net: %s", e)
+        return []
 
 
 def search_okolica_only(query: str, limit: int = None) -> list[dict]:
     """
-    Поиск на okolica.net по ключевым словам.
-    Всегда объединяет RSS (title, description, fulltext ~10 шт.) и HTML (много страниц).
+    Объединённый поиск на okolica.net (новости + архив).
+    Для раздельного поиска используйте search_okolica_news и search_okolica_archive.
     """
     limit = limit or ARTICLES_LIMIT_SEARCH
-
     try:
         rss_articles = _fetch_okolica_rss()
         html_articles = _fetch_okolica_html()
-        articles = _merge_okolica_sources(rss_articles, html_articles)
-
+        gazeta_articles = _fetch_okolica_gazeta()
+        articles = _merge_okolica_sources(rss_articles, html_articles, gazeta_articles)
         if not articles:
             return []
-
-        query_words = [w.strip().lower() for w in query.split() if w.strip()]
-        if not query_words:
-            return [
-                {"title": a["title"], "url": a["url"], "summary": a.get("summary", "")}
-                for a in articles[:limit]
-            ]
-
-        matched = []
-        for a in articles:
-            searchable = f"{a['title']} {a.get('summary', '')} {a.get('_fulltext', '')}".lower()
-            if all(w in searchable for w in query_words):
-                matched.append({"title": a["title"], "url": a["url"], "summary": a.get("summary", "")})
-                if len(matched) >= limit:
-                    break
-
-        if not matched:
-            for a in articles:
-                searchable = f"{a['title']} {a.get('summary', '')} {a.get('_fulltext', '')}".lower()
-                if any(w in searchable for w in query_words):
-                    matched.append({"title": a["title"], "url": a["url"], "summary": a.get("summary", "")})
-                    if len(matched) >= limit:
-                        break
-
-        return matched
-
+        query_words = _extract_and_expand_query(query)
+        return _run_search(articles, query_words, limit)
     except Exception as e:
         logger.error("Ошибка поиска okolica.net: %s", e)
         return []
