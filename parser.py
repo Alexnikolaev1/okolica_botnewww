@@ -272,10 +272,20 @@ def _fetch_okolica_rss() -> list[dict]:
         return []
 
 
+def _normalize_article_url(href: str) -> str:
+    """Нормализация URL статьи для дедупликации."""
+    href = href.strip()
+    if href.startswith("http"):
+        return href.replace("http://", "https://", 1).rstrip("/")
+    if href.startswith("/"):
+        return (OLD_SITE_URL + href).replace("http://", "https://", 1).rstrip("/")
+    return (OLD_SITE_URL + "/" + href).replace("http://", "https://", 1).rstrip("/")
+
+
 def _fetch_okolica_html_from_path(
     base_path: str, max_pages: int, seen_urls: set
 ) -> list[dict]:
-    """Загрузка статей с одной секции (news, news/rayon, news/busines)."""
+    """Загрузка статей с одной секции (news, news/rayon, news/busines, news/pub)."""
     articles = []
     path = f"{OLD_SITE_URL}/news/{base_path}" if base_path else f"{OLD_SITE_URL}/news"
     path = path.rstrip("/")
@@ -284,6 +294,8 @@ def _fetch_okolica_html_from_path(
         try:
             url = f"{path}/?page={page}" if page > 1 else f"{path}/"
             response = _make_request(url)
+            if response.status_code == 404:
+                break
             response.raise_for_status()
             try:
                 text = response.content.decode("cp1251")
@@ -292,31 +304,38 @@ def _fetch_okolica_html_from_path(
             soup = BeautifulSoup(text, "html.parser")
 
             for a in soup.find_all("a", href=True):
-                href = a.get("href", "")
-                if "/news/" not in href or ".html" not in href or "rss" in href:
+                href = a.get("href", "").strip()
+                if not href or "rss" in href.lower():
                     continue
                 if "/top.html" in href or "/last.html" in href:
                     continue
+                # Поддержка: /news/rayon/123.html, /news/pub/123.html
                 if not re.search(r"/news/[^/]+/\d+\.html", href):
                     continue
-                if href in seen_urls:
+
+                full_url = _normalize_article_url(href)
+                url_key = full_url.split("?")[0]
+                if url_key in seen_urls:
                     continue
 
-                full_url = OLD_SITE_URL + href if not href.startswith("http") else href
                 title = a.get_text(strip=True)
                 title = re.sub(r"\s*\[\.\.\.\]\s*$", "", title)
                 if not title or len(title) < 5:
                     continue
 
-                seen_urls.add(href)
-                full_url_https = full_url.replace("http://", "https://", 1)
+                seen_urls.add(url_key)
                 articles.append({
                     "title": title,
-                    "url": full_url_https,
+                    "url": full_url,
                     "summary": "",
                     "_fulltext": "",
                 })
 
+        except requests.exceptions.HTTPError as e:
+            if e.response is not None and e.response.status_code == 404:
+                break
+            logger.warning("Ошибка HTML okolica.net %s page %s: %s", base_path or "news", page, e)
+            break
         except Exception as e:
             logger.warning("Ошибка HTML okolica.net %s page %s: %s", base_path or "news", page, e)
             break
@@ -521,19 +540,30 @@ def search_okolica_news(query: str, limit: int = None) -> list[dict]:
 
 def search_okolica_archive(query: str, limit: int = None) -> list[dict]:
     """
-    Поиск по архиву: разделы ГОРОД и ФОТО (без ГАЗЕТА).
-    Поэзия, рассказы, очерки, городские материалы, фоторепортажи.
+    Поиск по архиву okolica.net: Район, Бизнес, Авторское + RSS.
+    Все разделы имеют прямые ссылки на статьи.
     """
     limit = limit or ARTICLES_LIMIT_ARCHIVE
     try:
         seen_urls: set = set()
         all_articles = []
-        for cat in ["gorod", "foto"]:
+
+        # RSS — полные тексты, отличный охват
+        rss_articles = _fetch_okolica_rss()
+        for a in rss_articles:
+            url_key = a["url"].split("?")[0]
+            if url_key not in seen_urls:
+                seen_urls.add(url_key)
+                all_articles.append(a)
+
+        # HTML: rayon (район/город), busines (бизнес), pub (авторское, очерки)
+        for cat in ["rayon", "busines", "pub"]:
             all_articles.extend(
                 _fetch_okolica_html_from_path(
                     cat, OKOLICA_ARCHIVE_CATEGORY_PAGES, seen_urls
                 )
             )
+
         if not all_articles:
             return []
         query_words = _extract_and_expand_query(query)

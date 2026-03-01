@@ -326,7 +326,7 @@ class OkolicaBot:
         """Поиск поэзии и статей в архиве газеты."""
         if not context.args:
             await update.message.reply_text(
-                "📖 <b>Поиск по архиву</b> (разделы Город и Фото)\n\n"
+                "📖 <b>Поиск по архиву</b> (Район, Бизнес, Авторское)\n\n"
                 "Укажите запрос: /search_old_archive ваш запрос",
                 parse_mode="HTML",
             )
@@ -334,7 +334,7 @@ class OkolicaBot:
 
         query = " ".join(context.args)
         chat_id = update.effective_chat.id
-        await context.bot.send_message(chat_id, "📖 Ищу в разделах Город и Фото…")
+        await context.bot.send_message(chat_id, "📖 Ищу в архиве okolica.net…")
 
         articles = await run_blocking(search_okolica_archive, query, ARTICLES_LIMIT_ARCHIVE)
 
@@ -511,7 +511,7 @@ class OkolicaBot:
         elif query.data == "search_old_archive_prompt":
             await context.bot.send_message(
                 chat_id,
-                "📖 <b>Поиск по архиву</b> (разделы Город и Фото)\n\n"
+                "📖 <b>Поиск по архиву</b> (Район, Бизнес, Авторское)\n\n"
                 "Укажите запрос: /search_old_archive ваш запрос",
                 parse_mode="HTML",
             )
