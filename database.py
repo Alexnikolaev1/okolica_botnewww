@@ -76,6 +76,7 @@ def init_database() -> None:
         """)
 
 
+
 def add_user(
     telegram_id: int,
     username: Optional[str] = None,

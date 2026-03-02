@@ -43,6 +43,7 @@ OKOLICA_GAZETA_PAGES = 8  # страниц архива для общего по
 OKOLICA_GAZETA_PAGES_ARCHIVE = 20  # страниц архива для поиска поэзии/статей (больше охват)
 OKOLICA_ARCHIVE_CATEGORY_PAGES = 10  # страниц для разделов gorod, foto в поиске по архиву
 ARTICLES_LIMIT_ARCHIVE = 15  # лимит результатов для поиска по архиву
+ARCHIVE_SEARCH_MAX_ATTEMPTS = 10  # макс. HTTP-запросов на один поиск по архиву
 JOB_CHECK_INTERVAL_MINUTES = 30
 
 # HTTP

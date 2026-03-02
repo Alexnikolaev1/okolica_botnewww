@@ -48,6 +48,7 @@ from config import (
     ARTICLES_LIMIT_LATEST,
     ARTICLES_LIMIT_SEARCH,
     ARTICLES_LIMIT_ARCHIVE,
+    ARCHIVE_SEARCH_MAX_ATTEMPTS,
     JOB_CHECK_INTERVAL_MINUTES,
     MAX_MESSAGE_LENGTH,
 )
@@ -334,7 +335,11 @@ class OkolicaBot:
 
         query = " ".join(context.args)
         chat_id = update.effective_chat.id
-        await context.bot.send_message(chat_id, "📖 Ищу в архиве okolica.net…")
+
+        await context.bot.send_message(
+            chat_id,
+            f"📖 Ищу в архиве okolica.net… (максимум {ARCHIVE_SEARCH_MAX_ATTEMPTS} попыток)",
+        )
 
         articles = await run_blocking(search_okolica_archive, query, ARTICLES_LIMIT_ARCHIVE)
 

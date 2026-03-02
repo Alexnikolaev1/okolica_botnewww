@@ -23,6 +23,7 @@ from config import (
     OKOLICA_GAZETA_PAGES,
     OKOLICA_GAZETA_PAGES_ARCHIVE,
     OKOLICA_ARCHIVE_CATEGORY_PAGES,
+    ARCHIVE_SEARCH_MAX_ATTEMPTS,
 )
 
 # Разделы okolica.net для расширенного поиска (пустая строка = главная лента)
@@ -541,14 +542,16 @@ def search_okolica_news(query: str, limit: int = None) -> list[dict]:
 def search_okolica_archive(query: str, limit: int = None) -> list[dict]:
     """
     Поиск по архиву okolica.net: Район, Бизнес, Авторское + RSS.
-    Все разделы имеют прямые ссылки на статьи.
+    Всего макс. ARCHIVE_SEARCH_MAX_ATTEMPTS запросов (1 RSS + остальные — страницы).
     """
     limit = limit or ARTICLES_LIMIT_ARCHIVE
+    max_requests = ARCHIVE_SEARCH_MAX_ATTEMPTS  # 1 RSS + (max_requests-1) страниц
+    pages_per_category = max(1, (max_requests - 1) // 3)  # по 3 категории
     try:
         seen_urls: set = set()
         all_articles = []
 
-        # RSS — полные тексты, отличный охват
+        # RSS — 1 запрос
         rss_articles = _fetch_okolica_rss()
         for a in rss_articles:
             url_key = a["url"].split("?")[0]
@@ -556,11 +559,11 @@ def search_okolica_archive(query: str, limit: int = None) -> list[dict]:
                 seen_urls.add(url_key)
                 all_articles.append(a)
 
-        # HTML: rayon (район/город), busines (бизнес), pub (авторское, очерки)
+        # HTML: rayon, busines, pub — по pages_per_category страниц на каждый
         for cat in ["rayon", "busines", "pub"]:
             all_articles.extend(
                 _fetch_okolica_html_from_path(
-                    cat, OKOLICA_ARCHIVE_CATEGORY_PAGES, seen_urls
+                    cat, pages_per_category, seen_urls
                 )
             )
 
