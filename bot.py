@@ -159,8 +159,8 @@ class OkolicaBot:
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("📰 Последние новости", callback_data="latest")],
             [InlineKeyboardButton("🔍 Поиск", callback_data="search_prompt")],
-            [InlineKeyboardButton("📰 Поиск новостей (okolica.net)", callback_data="search_old_news_prompt")],
-            [InlineKeyboardButton("📖 Поиск поэзии и статей (архив)", callback_data="search_old_archive_prompt")],
+            [InlineKeyboardButton("📰 Поиск новостей (старый сайт)", callback_data="search_old_news_prompt")],
+            [InlineKeyboardButton("📖 Поиск иной инфы (архив)", callback_data="search_old_archive_prompt")],
             [InlineKeyboardButton("📚 Архив", url=f"{OLD_SITE_URL}/gazeta/")],
             [InlineKeyboardButton("📝 Предложить новость", callback_data="news_prompt")],
             [InlineKeyboardButton("📣 В Голос народа", callback_data="voice_prompt")],
